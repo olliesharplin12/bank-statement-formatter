@@ -9,65 +9,12 @@ import openpyxl
 import os
 
 
-# [
-#     'Finished on',
-#     'Source amount (after fees)',
-#     'Source currency',
-#     'Target name',
-#     'Reference',
-#     'Source name',
-#     'ID',
-#     'Exchange rate',
-# ]
 WISE_COLUMN_ORDER = ['', 4, '', 10, 11, 12, 16, 9, 0, 15]
-
-# WISE_COLUMNS_TO_DROP = [  TODO: Remove
-#     'Status',
-#     'Direction',
-#     'Created on',
-#     'Source fee amount',
-#     'Source fee currency',
-#     'Target fee amount',
-#     'Target fee currency',
-#     'Target amount (after fees)',
-#     'Target currency',
-#     'Batch',
-# ]
-
-# [
-#     'Transaction Date',
-#     'Amount',
-#     'Details',
-#     'Particulars',
-#     'Code',
-#     'Reference',
-#     'Type',
-#     'Conversion Charge',
-#     'Foreign Currency Amount',
-# ]
-ANZ_COLUMN_ORDER = ['', 6, '', 5, 'NZD', 1, 2, 3, 4, 0, 8, 7]
-
-# SPLITWISE_COLUMN_ORDER = [
-#     'Date',
-#     'Ollie Sharplin',
-#     'Currency',
-#     'Description',
-# ]
+ANZ_DEBIT_COLUMN_ORDER = ['', 6, '', 5, 'NZD', 1, 2, 3, 4, 0, 8, 7]
+ANZ_CREDIT_COLUMN_ORDER = ['', 4, '', 2, 'NZD', 0, '', 3, '', 6]
 SPLITWISE_COLUMN_ORDER = ['', 0, '', 5, 4, 1, 7]
 
-OUTPUT_HEADER = ['Tag', 'Date', 'GBP Amount', 'Amount', 'Currency', 'Description', 'D2', 'D3', 'Type', 'Exchange Rate']
-
-# def format_transactions(file_path, columns_to_drop):
-#     # Read the Excel file
-#     df = pd.read_excel(file_path)
-#     print(df)
-#     print(df.columns.values)
-
-#     # Remove unused columns
-#     df.drop(columns=columns_to_drop, inplace=True)
-#     print(df.columns.values)
-
-#     return df
+OUTPUT_HEADER = ['Tag', 'Date', 'Amount (NZD)', 'Amount', 'Currency', 'Description', 'D2', 'D3', 'Type', 'Exchange Rate']
 
 
 def read_csv(file_path, row_start_index):
@@ -80,6 +27,22 @@ def read_csv(file_path, row_start_index):
                 skipped_rows += 1
                 continue
             rows.append(row)
+    return rows
+
+
+def invert_wise_amount(rows: list[list]):
+    for row in rows:
+        direction = row[2]
+        if direction == "OUT":
+            row[10] = -float(row[10])
+    return rows
+
+
+def invert_anz_credit_amount(rows: list[list]):
+    for row in rows:
+        trans_type = row[1]
+        if trans_type != "C":
+            row[2] = -float(row[2])
     return rows
 
 
@@ -125,49 +88,67 @@ def filter_rows_by_date(rows: list, date_index: int, date_format: str, start_dat
     return valid_rows
 
 
-# def write_dataframe_to_excel(output_file_path, wise_df, anz_df):
-#     writer = pd.ExcelWriter(output_file_path, engine='xlsxwriter')
-#     wise_df.to_excel(writer, sheet_name='Wise', index=False, columns=WISE_COLUMN_ORDER)
-#     anz_df.to_excel(writer, sheet_name='ANZ', index=False, columns=ANZ_COLUMN_ORDER)
-#     writer._save()
+def set_row_types(rows: list[list], transaction_type):
+    for row in rows:
+        if transaction_type == "WISE":
+            row[1] = datetime.datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S").strftime('%d/%m/%Y') # Date
+        elif transaction_type == "SPLITWISE":
+            row[1] = datetime.datetime.strptime(row[1], "%Y-%m-%d").strftime('%d/%m/%Y') # Date
+        row[3] = float(row[3]) # Amount
+    return rows
 
 
 if __name__ == '__main__':
     args = sys.argv
 
-    start_date = datetime.datetime.strptime(args[4], '%Y-%m-%d')
-    end_date = datetime.datetime.strptime(args[5], '%Y-%m-%d').replace(hour=23, minute=59, second=59)
-    print(start_date, end_date)
-
     wise_transactions_file = args[1]
-    anz_transactions_file = args[2]
-    splitwise_export_dir = args[3]
+    anz_debit_transactions_file = args[2]
+    anz_credit_transactions_file = args[3]
+    splitwise_export_dir = args[4]
+
+    start_date = datetime.datetime.strptime(args[5], '%Y-%m-%d')
+    end_date = datetime.datetime.strptime(args[6], '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+    print(start_date, end_date)
     
     print('\nWISE ROWS')
     wise_rows_unordered = read_csv(wise_transactions_file, 1)
-    wise_rows_filtered = filter_rows_by_date(wise_rows_unordered, 4, '%Y-%m-%d %H:%M:%S', start_date, end_date)
-    wise_rows = swap_columns(wise_rows_filtered, WISE_COLUMN_ORDER)
+    wise_rows_inverted = invert_wise_amount(wise_rows_unordered)
+    wise_rows_filtered = filter_rows_by_date(wise_rows_inverted, 4, '%Y-%m-%d %H:%M:%S', start_date, end_date)
+    wise_rows_ordered = swap_columns(wise_rows_filtered, WISE_COLUMN_ORDER)
+    wise_rows = set_row_types(wise_rows_ordered, "WISE")
 
     for row in wise_rows:
         print(row)
 
-    print('\nANZ ROWS')
-    anz_rows_unordered = read_csv(anz_transactions_file, 1)
-    anz_rows_filtered = filter_rows_by_date(anz_rows_unordered, 6, '%d/%m/%Y', start_date, end_date)
-    anz_rows = swap_columns(anz_rows_filtered, ANZ_COLUMN_ORDER)
+    print('\nANZ DEBIT ROWS')
+    anz_debit_rows_unordered = read_csv(anz_debit_transactions_file, 1)
+    anz_debit_rows_filtered = filter_rows_by_date(anz_debit_rows_unordered, 6, '%d/%m/%Y', start_date, end_date)
+    anz_debit_rows_ordered = swap_columns(anz_debit_rows_filtered, ANZ_DEBIT_COLUMN_ORDER)
+    anz_debit_rows = set_row_types(anz_debit_rows_ordered, "ANZ_DEBIT")
     
-    for row in anz_rows:
+    for row in anz_debit_rows:
+        print(row)
+
+    print('\nANZ CREDIT ROWS')
+    anz_credit_rows_unordered = read_csv(anz_credit_transactions_file, 1)
+    anz_credit_rows_inverted = invert_anz_credit_amount(anz_credit_rows_unordered)
+    anz_credit_rows_filtered = filter_rows_by_date(anz_credit_rows_inverted, 4, '%d/%m/%Y', start_date, end_date)
+    anz_credit_rows_ordered = swap_columns(anz_credit_rows_filtered, ANZ_CREDIT_COLUMN_ORDER)
+    anz_credit_rows = set_row_types(anz_credit_rows_ordered, "ANZ_CREDIT")
+    
+    for row in anz_credit_rows:
         print(row)
 
     print('\nSPLIT ROWS')
     splitwise_rows_all = combine_splitwise_transactions(splitwise_export_dir)
     splitwise_rows_filtered = filter_rows_by_date(splitwise_rows_all, 0, '%Y-%m-%d', start_date, end_date)
-    splitwise_rows = swap_columns(splitwise_rows_filtered, SPLITWISE_COLUMN_ORDER)
+    splitwise_rows_ordered = swap_columns(splitwise_rows_filtered, SPLITWISE_COLUMN_ORDER)
+    splitwise_rows = set_row_types(splitwise_rows_ordered, "SPLITWISE")
 
     for row in splitwise_rows:
         print(row)
     
-    transactions = [OUTPUT_HEADER] + [[]] + wise_rows + [[]] + anz_rows + [[]] + splitwise_rows
+    transactions = [OUTPUT_HEADER] + [[]] + wise_rows + [[]] + anz_debit_rows + [[]] + anz_credit_rows + [[]] + splitwise_rows
 
     # Write to Excel
     workbook = openpyxl.Workbook()
@@ -180,25 +161,3 @@ if __name__ == '__main__':
     date_format = '%Y-%m-%d'
     output_filename = f'Spending_{start_date.strftime(date_format)}_to_{end_date.strftime(date_format)}.xlsx'
     workbook.save(os.path.join(output_directory, output_filename))
-
-
-    # wise_df = format_transactions(wise_transactions_file, WISE_COLUMNS_TO_DROP)
-    # wise_rows = wise_df.values().tolist()
-    # anz_df = format_transactions(anz_transactions_file, ANZ_COLUMNS_TO_DROP)
-
-    # now = datetime.datetime.now()
-    # formatted_datetime = now.strftime('%Y%m%d %H%M')
-    # output_file = f'{formatted_datetime} Formatted Transactions.xlsx'
-
-    # write_dataframe_to_excel(output_file, wise_df, anz_df)
-
-    # xls = pd.ExcelFile(output_file)
-    # df1 = pd.read_excel(xls, 'Wise')  # Read data from Sheet1
-    # df2 = pd.read_excel(xls, 'ANZ')  # Read data from Sheet2
-
-    # # Combine the rows from both dataframes
-    # combined_df = pd.concat([df1, df2], ignore_index=True)
-
-    # # Write the combined data to a new Excel file
-    # with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-    #     combined_df.to_excel(writer, sheet_name='All Transactions', index=False)
