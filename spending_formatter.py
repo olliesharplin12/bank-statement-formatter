@@ -19,6 +19,8 @@ OUTPUT_HEADER = ['Tag', 'Date', 'Amount (NZD)', 'Amount', 'Currency', 'Descripti
 
 def read_csv(file_path, row_start_index):
     rows = []
+    if len(file_path) <= 1:
+        return rows
     with open(file_path, newline='', encoding='utf-8') as csvfile:
         reader = csv.reader(csvfile)
         skipped_rows = 0
